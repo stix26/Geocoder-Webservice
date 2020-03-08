@@ -1,24 +1,10 @@
-from flask import Flask, render_template, request
-from flask_sqlalchemy import SQLAlchemy
-from send_email import send_email
-from sqlalchemy.sql import func
+from flask import Flask, render_template, request, send_file
+import pandas
+from geopy.geocoders import ArcGIS
+import datetime
+
 
 app=Flask(__name__)
-#app.config['SQLALCHEMY_DATABASE_URI']='postgresql://postgres:syracuse16@localhost/height_collector'
-app.config['SQLALCHEMY_DATABASE_URI']='postgres://ccisjumvkgmdpf:0f102bfc6a8da5752eae58b8b9c4819d1c019540b7ae39abeb0db74b1417cda7@ec2-54-174-229-152.compute-1.amazonaws.com:5432/dfablsch8gsu1l?sslmode=require'
-db=SQLAlchemy(app)
-
-class Data(db.Model):
-    __tablename__="data"
-    id=db.Column(db.Integer, primary_key=True)
-    email_=db.Column(db.String(120), unique=True)
-    height_=db.Column(db.Integer)
-
-    def __init__(self, email_, height_):
-        self.email_=email_
-        self.height_=height_
-
-
 
 @app.route("/")
 def index():
@@ -26,21 +12,30 @@ def index():
 
 @app.route("/success", methods=['POST'])
 def success():
+    global filename
     if request.method=='POST':
-        email=request.form["email_name"]
-        height=request.form["height_name"]
-        if db.session.query(Data).filter(Data.email_==email).count() == 0:
-            data=Data(email,height)
-            db.session.add(data)
-            db.session.commit()
-            average_height=db.session.query(func.avg(Data.height_)).scalar()
-            average_height=round(average_height,1)
-            count=db.session.query(Data.height_).count()
-            send_email(email, height, average_height, count)
-            return render_template("success.html")
-    return render_template('index.html',
-    text="Seems like we've got something from that email address already!")
+        file=request.files["file"]
+        try:
+            df=pandas.read_csv(file)
+            nom=ArcGIS()
+            n=nom.geocode("")
+            #df["Address"]=df["Address"]+", "+df["City"] + ", "+ df["State"]+ ", " + df["Country"]
+            df["Coordinates"]=df["Address"].apply(nom.geocode)
+            df["Latitude"]=df["Coordinates"].apply(lambda x: x.latitude if x != None else None)
+            df["Longitude"]=df["Coordinates"].apply(lambda x: x.longitude if x != None else None)
+            #df=df.drop("Coordinates", 1)
+            filename=datetime.datetime.now().strftime("uploads/%Y-%m-%d-%H-%M-%S-%f"+".csv")
+            df.to_csv(filename, index=None)
+            return render_template("index.html", text=df.to_html(), btn="download.html")
+        except:
+            return render_template("index.html", text="Missing address in column of your CSV file!")
+
+@app.route("/download")
+def download():
+    return send_file(filename, attachment_filename="uploadedfile.csv", as_attachment=True)
+
 
 if __name__=='__main__':
+    #app.debug=False
     app.debug=True
     app.run()
